@@ -1,0 +1,30 @@
+FROM node:20-alpine
+WORKDIR /app
+
+# Install only production deps needed for prisma + psql client to enable pgvector
+RUN apk add --no-cache postgresql-client
+
+# Install only the Prisma CLI and Client dependencies needed to push the schema
+RUN npm install prisma@7.5.0 @prisma/client@7.5.0 @prisma/adapter-pg@7.5.0 pg@8.11.3 --no-save
+
+# Copy Prisma schema and config
+COPY prisma ./prisma
+COPY prisma.config.ts ./
+
+# Generate Prisma client
+RUN npx prisma generate
+
+# 1. Enable pgvector extension (must happen before Prisma creates tables with vector columns)
+# 2. Then push the schema
+CMD sh -c '\
+  DB_HOST=$(echo $DATABASE_URL | sed "s|.*@\([^:]*\):.*|\1|") && \
+  DB_PORT=$(echo $DATABASE_URL | sed "s|.*:\([0-9]*\)/.*|\1|") && \
+  DB_NAME=$(echo $DATABASE_URL | sed "s|.*/||") && \
+  until psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;" 2>/dev/null; do \
+    echo "⏳ Waiting for DB to accept connections..."; sleep 3; \
+  done && \
+  echo "✅ pgvector extension enabled" && \
+  until npx prisma db push --accept-data-loss; do \
+    echo "⏳ Retrying schema push..."; sleep 3; \
+  done && \
+  echo "✅ Schema synced"'

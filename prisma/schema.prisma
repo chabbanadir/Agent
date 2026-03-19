@@ -1,0 +1,164 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Tenant {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  // Integrations
+  gmailEmail    String?
+  gmailSettings Json?     // Store tokens, labels, etc.
+  whatsappNumber String?
+  whatsappSettings Json?
+  
+  agents        Agent[]
+  documents     Document[]
+  messages      Message[]
+  users         User[]
+  aiModels      AIModel[]
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+  
+  // Multi-tenancy
+  tenantId      String?
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Agent {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  name            String
+  description     String?
+  provider        String   @default("openai") // openai, anthropic, gemini
+  model           String   @default("gpt-4o")
+  systemPrompt    String?  @db.Text
+  persuasionLevel Float    @default(0.5) // 0 to 1
+  isActive        Boolean  @default(true)
+  
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([tenantId])
+}
+
+model Document {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  name        String
+  content     String   @db.Text
+  rawContent  Bytes?
+  mimeType    String?
+  vector      Unsupported("vector")? // Legacy, will keep for now
+  status      String   @default("UPLOADED") // UPLOADED, INDEXING, INDEXED, ERROR
+  metadata    Json?
+  
+  chunks      DocumentChunk[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model DocumentChunk {
+  id          String   @id @default(cuid())
+  documentId  String
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content     String   @db.Text
+  vector      Unsupported("vector")?
+  createdAt   DateTime @default(now())
+
+  @@index([documentId])
+}
+
+model AIModel {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  name        String
+  provider    String   // OpenAI, Anthropic, Ollama, etc.
+  modelType   String   // LLM, EMBEDDING
+  config      Json?    // Specific model config, api keys, etc.
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([tenantId])
+}
+
+model Message {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  externalId      String?  @unique // Gmail message ID, WhatsApp ID
+  threadId        String?  // Message thread/group ID
+  source          String   // whatsapp, email, api
+  sender          String   // Phone number or email
+  content         String   @db.Text
+  role            String   @default("user") // user, assistant, system
+  status          String   @default("RECEIVED") // RECEIVED, PROCESSING, COMPLETED, FAILED
+  trace           Json?    // For telemetry (thoughts, tool calls, etc.)
+  
+  parentMessageId String?
+  parentMessage   Message?  @relation("MessageThread", fields: [parentMessageId], references: [id])
+  replies        Message[] @relation("MessageThread")
+
+  createdAt       DateTime @default(now())
+
+  @@index([tenantId])
+  @@index([sender])
+  @@index([threadId])
+}
