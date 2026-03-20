@@ -8,16 +8,19 @@ export async function GET(req: NextRequest) {
         const session = await getServerSession(authOptions);
         const tenantId = session?.user?.tenantId || "default-tenant";
 
-        const agent = await prisma.agent.findFirst({
-            where: { tenantId, isActive: true }
+        const agents = await prisma.agent.findMany({
+            where: { tenantId }
         });
 
-        return NextResponse.json(agent || {
+        // Return list or a default if empty
+        return NextResponse.json(agents.length > 0 ? agents : [{
+            id: 'default',
+            name: 'Default Agent',
             provider: "openai",
             model: "gpt-4o",
             persuasionLevel: 0.8,
             systemPrompt: ""
-        });
+        }]);
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
@@ -29,24 +32,19 @@ export async function POST(req: NextRequest) {
         const tenantId = session?.user?.tenantId || "default-tenant";
 
         const body = await req.json();
-        const { provider, model, persuasionLevel, systemPrompt } = body;
+        const { id, name, provider, model, persuasionLevel, systemPrompt } = body;
 
-        // Upsert agent for this tenant
-        const agent = await prisma.agent.findFirst({
-            where: { tenantId, isActive: true }
-        });
-
-        if (agent) {
+        if (id) {
             const updated = await prisma.agent.update({
-                where: { id: agent.id },
-                data: { provider, model, persuasionLevel, systemPrompt }
+                where: { id, tenantId },
+                data: { name, provider, model, persuasionLevel, systemPrompt }
             });
             return NextResponse.json(updated);
         } else {
             const created = await prisma.agent.create({
                 data: {
                     tenantId,
-                    name: "Primary Agent",
+                    name: name || "New Agent",
                     provider,
                     model,
                     persuasionLevel,

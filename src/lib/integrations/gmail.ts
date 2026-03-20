@@ -81,7 +81,7 @@ export class GmailService {
 
     /** Build an authenticated Gmail OAuth2 client using stored tokens */
     private async getAuthClient(): Promise<OAuth2Client | null> {
-        const tenant = await (prisma as any).tenant.findUnique({
+        const tenant = await prisma.tenant.findUnique({
             where: { id: this.tenantId },
             include: { users: { include: { accounts: true } } }
         });
@@ -119,7 +119,7 @@ export class GmailService {
         // Auto-refresh and persist new tokens
         oauth2Client.on("tokens", async (tokens) => {
             console.log(`[Gmail] Refreshed tokens for ${tenant.gmailEmail}`);
-            await (prisma as any).account.update({
+            await prisma.account.update({
                 where: { id: account.id },
                 data: {
                     access_token: tokens.access_token ?? account.access_token,
@@ -153,10 +153,10 @@ export class GmailService {
             const autoReply = tenant?.gmailSettings?.autoReply !== false;
             const gmail = google.gmail({ version: "v1", auth });
 
-            // Fetch unread messages - broadened query to find new messages
+            // Fetch unread messages - limited to last 24 hours to avoid processing old unread emails
             const listRes = await gmail.users.messages.list({
                 userId: "me",
-                q: "is:unread -category:social -category:promotions",
+                q: "is:unread newer_than:1d -category:social -category:promotions",
                 maxResults: maxResults,
             });
 
@@ -174,7 +174,7 @@ export class GmailService {
                 let dbMessageId: string | undefined;
                 try {
                     // Skip if already successfully processed
-                    const existing = await (prisma.message as any).findFirst({
+                    const existing = await prisma.message.findFirst({
                         where: { externalId: msg.id!, tenantId: this.tenantId },
                     });
                     if (existing && existing.status === "COMPLETED") {
@@ -203,7 +203,7 @@ export class GmailService {
                     console.log(`[Gmail] Processing email from: ${from} | Subject: ${subject} | Thread: ${gmailThreadId}`);
 
                     // Create or update the message record to PROCESSING
-                    const dbMessage = await (prisma.message as any).upsert({
+                    const dbMessage = await prisma.message.upsert({
                         where: { externalId: msg.id! },
                         create: {
                             tenantId: this.tenantId,
@@ -222,11 +222,12 @@ export class GmailService {
                     dbMessageId = dbMessage.id;
 
                     // Run the AI agent
-                    const result = await (orchestrate as any)(
+                    const result = await orchestrate(
                         `Subject: ${subject}\n\n${body.trim()}`,
                         this.tenantId
                     );
 
+                    const category = result?.category || "OTHER";
                     const agentMessages = result?.messages || [];
                     const lastMsg = agentMessages[agentMessages.length - 1];
                     const responseContent = typeof lastMsg?.content === "string"
@@ -234,18 +235,19 @@ export class GmailService {
                         : JSON.stringify(lastMsg?.content);
 
                     // Save agent reply and link to parent
-                    if (responseContent) {
-                        await (prisma.message as any).create({
+                    if (responseContent && category === "BUSINESS") {
+                        await prisma.message.create({
                             data: {
                                 tenantId: this.tenantId,
                                 role: "assistant",
                                 content: responseContent,
                                 sender: "AgentClaw Bot",
                                 source: "email",
-                                threadId: gmailThreadId,
+                                threadId: gmailThreadId || undefined,
                                 parentMessageId: dbMessage.id,
                                 status: "COMPLETED",
-                                trace: result, // Store the full graph state as trace
+                                category: "BUSINESS",
+                                trace: result as any, // result is AgentState, trace is Json
                             },
                         });
 
@@ -259,14 +261,20 @@ export class GmailService {
                                     raw: buildRawEmail(fromEmail, tenant.gmailEmail, subject, responseContent),
                                 },
                             });
-                            console.log(`[Gmail] Auto-replied to ${fromEmail}`);
+                            console.log(`[Gmail] Auto-replied to ${fromEmail} (Category: BUSINESS)`);
                         }
+                    } else {
+                        console.log(`[Gmail] Skipping auto-reply for category: ${category}`);
                     }
 
-                    // Update parent to COMPLETED
-                    await (prisma.message as any).update({
+                    // Update parent with category and COMPLETED status
+                    await prisma.message.update({
                         where: { id: dbMessage.id },
-                        data: { status: "COMPLETED", trace: result }
+                        data: {
+                            status: "COMPLETED",
+                            category,
+                            trace: result as any
+                        }
                     });
 
                     // Mark the original email as read in Gmail
@@ -280,9 +288,9 @@ export class GmailService {
                 } catch (err: any) {
                     console.error(`[Gmail] Error processing message ${msg.id}:`, err.message);
                     if (dbMessageId) {
-                        await (prisma.message as any).update({
+                        await prisma.message.update({
                             where: { id: dbMessageId },
-                            data: { status: "FAILED", trace: { error: err.message } }
+                            data: { status: "FAILED", trace: { error: err.message } as any }
                         });
                     }
                 }

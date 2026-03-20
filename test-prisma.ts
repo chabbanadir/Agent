@@ -1,15 +1,20 @@
-import prisma from './src/lib/prisma';
+import { PrismaClient } from '@prisma/client'
+const prisma = new PrismaClient()
 
 async function main() {
-    console.log("Testing Prisma connection...");
-    try {
-        const documents = await prisma.document.findMany({ take: 1 });
-        console.log("Connection successful! Found documents:", documents.length);
-    } catch (error) {
-        console.error("Prisma error:", error);
-    } finally {
-        await prisma.$disconnect();
-    }
+  const tenantId = 'cmmxc6md700020tph3m4i1kg4'
+  const messages = await prisma.message.findMany({
+    where: {
+      tenantId,
+      NOT: {
+        category: { in: ["SPAM", "SOCIAL", "OTHER"] }
+      }
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200
+  })
+
+  console.log(`Found ${messages.length} messages. Categories: ${[...new Set(messages.map(m => m.category))].join(", ")}`);
 }
 
-main();
+main().finally(() => prisma.$disconnect())

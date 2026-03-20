@@ -1,13 +1,20 @@
 import { HumanMessage, SystemMessage, AIMessage } from "@langchain/core/messages";
 import { getModel } from "../llm/gateway";
+import prisma from "@/lib/prisma";
 
 export async function clerkNode(state: any) {
-    const { messages, context, persuasionLevel = 0.8, tenantId } = state;
+    const { messages, context, persuasionLevel = 0.8, tenantId, agentId } = state;
     const lastMessage = messages[messages.length - 1].content;
 
-    const clerk = await getModel(tenantId);
+    // Fetch the agent to get the custom system prompt
+    const agent = agentId
+        ? await prisma.agent.findUnique({ where: { id: agentId } })
+        : await prisma.agent.findFirst({ where: { tenantId, isActive: true } });
 
-    const systemPrompt = `You are a persuasive Sales Clerk. 
+    const clerk = await getModel(tenantId, agentId);
+
+    const basePrompt = agent?.systemPrompt || "You are a persuasive Sales Clerk.";
+    const systemPrompt = `${basePrompt}
 Your goal is to answer the user's question using the provided context AND push them to book a service.
 Persuasion Level: ${persuasionLevel} (out of 1).
 

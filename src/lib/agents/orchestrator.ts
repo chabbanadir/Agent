@@ -7,31 +7,46 @@ import { getModel } from "../llm/gateway";
 
 // Define the state transitions
 const orchestratorNode = async (state: AgentState) => {
-    const { messages, tenantId } = state;
+    const { messages, tenantId, agentId } = state;
     const lastMessage = messages[messages.length - 1];
     const query = typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content);
 
     // Use the dynamic model gateway
-    const classifier = await getModel(tenantId);
+    const classifier = await getModel(tenantId, agentId);
 
     try {
         const classification = await classifier.invoke([
-            new SystemMessage("Classify if this message needs a business response (e.g. asking about services, hours, company info). Reply with EXACTLY 'RESPOND' or 'IGNORE'. Defaults to 'RESPOND' if unsure."),
+            new SystemMessage(`
+                You are a decision layer for an AI agent representing a surf company. 
+                Classify the incoming message into one of these categories:
+                - BUSINESS: High-intent messages about surfing, surf lessons, gear, hours, or company-related inquiries.
+                - CLOSURE: Messages like "thank you", "goodbye", "see ya", or "have a nice day" that signal the end of a conversation.
+                - SOCIAL: Notifications from social media platforms (Twitch, Instagram, etc.).
+                - SPAM: Promotional emails, ads, or phishing.
+                - OTHER: Anything else that doesn't require a business response.
+
+                CRITICAL: The company ONLY provides surf-related services. If someone asks for screen repair or something else, it is NOT business.
+                
+                Reply with EXACTLY the category name in UPPERCASE. Default to OTHER if unsure.
+            `),
             new HumanMessage(query)
         ]);
 
-        const rawContent = classification.content.toString();
-        const content = rawContent.toUpperCase().trim();
+        const content = classification.content.toString().toUpperCase().trim();
         console.log(`[Orchestrator] Classification result: "${content}"`);
 
-        if (content.includes("IGNORE")) {
-            return { next: "__end__" };
+        // Any of these should stop the loop
+        const ignoreCategories = ["SPAM", "SOCIAL", "OTHER", "CLOSURE"];
+        const category = ignoreCategories.includes(content) ? content : "BUSINESS";
+
+        if (category !== "BUSINESS") {
+            return { next: "__end__", category };
         }
 
-        return { next: "research" };
+        return { next: "research", category };
     } catch (error) {
-        console.error("[Orchestrator] Classification failed, defaulting to research:", error);
-        return { next: "research" };
+        console.error("[Orchestrator] Classification failed, defaulting to OTHER:", error);
+        return { next: "__end__", category: "OTHER" };
     }
 };
 
@@ -49,9 +64,17 @@ const workflow = new StateGraph<AgentState>({
             value: (x, y) => y ?? x,
             default: () => ""
         },
+        agentId: {
+            value: (x, y) => y ?? x,
+            default: () => undefined
+        },
         next: {
             value: (x, y) => y ?? x,
             default: () => ""
+        },
+        category: {
+            value: (x, y) => y ?? x,
+            default: () => undefined
         },
         context: {
             value: (x, y) => (x || []).concat(y || []),
@@ -77,11 +100,12 @@ const workflow = new StateGraph<AgentState>({
 
 export const agentExecutor = workflow.compile();
 
-export async function orchestrate(query: string, tenantId: string) {
+export async function orchestrate(query: string, tenantId: string, agentId?: string): Promise<AgentState> {
     return await agentExecutor.invoke({
         messages: [new HumanMessage(query)],
         tenantId,
+        agentId,
         next: "orchestrate",
         context: []
-    });
+    }) as unknown as AgentState;
 }

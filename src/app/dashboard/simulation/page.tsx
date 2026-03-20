@@ -1,14 +1,33 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Bot, Send, Terminal, Cpu, Zap, Radio, Loader2, MessageSquare, AlertCircle, ChevronRight, Play } from 'lucide-react';
 
 export default function SimulationPage() {
     const [sender, setSender] = useState('customer@example.com');
     const [message, setMessage] = useState('I need help with my screen repair, what are your hours?');
+    const [agents, setAgents] = useState<any[]>([]);
+    const [selectedAgentId, setSelectedAgentId] = useState<string>('');
     const [isSimulating, setIsSimulating] = useState(false);
     const [result, setResult] = useState<any | null>(null);
     const [activeTab, setActiveTab] = useState<'response' | 'trace' | 'raw'>('response');
+
+    useEffect(() => {
+        const fetchAgents = async () => {
+            try {
+                const res = await fetch('/api/agents');
+                const data = await res.json();
+                const agentsList = Array.isArray(data) ? data : [data];
+                setAgents(agentsList);
+                if (agentsList.length > 0) {
+                    setSelectedAgentId(agentsList[0].id);
+                }
+            } catch (error) {
+                console.error("Failed to fetch agents:", error);
+            }
+        };
+        fetchAgents();
+    }, []);
 
     const handleSimulate = async () => {
         setIsSimulating(true);
@@ -17,7 +36,7 @@ export default function SimulationPage() {
             const res = await fetch('/api/simulation', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sender, message })
+                body: JSON.stringify({ sender, message, agentId: selectedAgentId })
             });
             const data = await res.json();
             setResult(data);
@@ -71,6 +90,18 @@ export default function SimulationPage() {
                                         }}
                                         className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl p-4 text-sm focus:outline-none focus:border-indigo-500 transition-all font-medium"
                                     />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Target Agent</label>
+                                    <select
+                                        value={selectedAgentId}
+                                        onChange={(e) => setSelectedAgentId(e.target.value)}
+                                        className="w-full bg-slate-950/50 border border-slate-800 rounded-2xl p-4 text-sm focus:outline-none focus:border-indigo-500 transition-all font-medium appearance-none"
+                                    >
+                                        {agents.map((agent) => (
+                                            <option key={agent.id} value={agent.id}>{agent.name}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 <div className="space-y-2">
                                     <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest ml-1">Simulated Message Body</label>

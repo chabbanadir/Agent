@@ -8,12 +8,11 @@ echo "⏳ Running database schema push..."
 until node_modules/.bin/prisma db push \
   --schema=./prisma/schema.prisma \
   --url="$DATABASE_URL" \
-  --skip-generate \
   --accept-data-loss; do
   echo "⏳ Database not ready, retrying in 3s..."
   sleep 3
 done
 
-echo "✅ Database schema synced"
-echo "🚀 Starting Next.js server..."
-exec node server.js
+echo "✅ Prisma client regenerated"
+echo "🚀 Starting application..."
+exec "$@"

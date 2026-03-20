@@ -21,13 +21,14 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Final production builder
 FROM builder_base AS builder
 ENV DATABASE_URL="postgresql://postgres:postgres@db:5432/agent_db"
 RUN npm run build
 
-# Development stage: runs the app in dev mode with hot reloading
 FROM builder_base AS dev
 ENV NODE_ENV development
 EXPOSE 3000
@@ -37,6 +38,10 @@ CMD ["npm", "run", "dev"]
 # Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
+
+COPY --from=builder /app/entrypoint.sh ./entrypoint.sh
+RUN chmod +x ./entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 ENV NODE_ENV production
 # Uncomment the following line in case you want to disable telemetry during runtime.
@@ -48,7 +53,7 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/public ./public
 
 # Set the correct permission for prerender cache
-RUN mkdir .next
+RUN mkdir -p .next
 RUN chown nextjs:nodejs .next
 
 # Automatically leverage output traces to reduce image size

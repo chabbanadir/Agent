@@ -58,6 +58,7 @@ export default function AgentConfigPage() {
         { id: 'anthropic', name: 'Anthropic', models: ['claude-3-5-sonnet-20240620', 'claude-3-opus-20240229'] },
         { id: 'google', name: 'Gemini', models: ['gemini-1.5-pro', 'gemini-1.5-flash'] },
         { id: 'ollama', name: 'Ollama', models: ['qwen2.5:7b-instruct', 'llama3.1', 'mistral'] },
+        { id: 'openrouter', name: 'OpenRouter', models: ['stepfun/step-3.5-flash:free', 'nvidia/nemotron-3-super-120b-a12b:free', 'openai/gpt-oss-120b:free'] },
     ];
 
     const currentProvider = providers.find(p => p.id === editingAgent?.provider) || providers[0];

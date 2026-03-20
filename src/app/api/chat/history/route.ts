@@ -9,27 +9,31 @@ export async function GET(req: NextRequest) {
         const tenantId = session?.user?.tenantId || "default-tenant";
 
         // Fetch all messages for the tenant, ordered by creation date
+        // Filter out SPAM, SOCIAL, and OTHER categories
         const messages = await prisma.message.findMany({
-            where: { tenantId },
+            where: {
+                tenantId,
+                NOT: {
+                    category: { in: ["SPAM", "SOCIAL", "OTHER"] }
+                }
+            },
             orderBy: { createdAt: "desc" },
             take: 200 // Fetch more to allow grouping
         }) as any[];
 
-        // Group by threadId
-        const threads: Record<string, any[]> = {};
-        const unthreaded: any[] = [];
+        // Group messages into conversations
+        const groups: Record<string, any[]> = {};
 
         messages.forEach(msg => {
-            if (msg.threadId) {
-                if (!threads[msg.threadId]) threads[msg.threadId] = [];
-                threads[msg.threadId].push(msg);
-            } else {
-                unthreaded.push(msg);
-            }
+            // Priority 1: Gmail Thread ID
+            // Priority 2: Sender (for unthreaded messages)
+            const groupId = msg.threadId || `sender:${msg.sender}`;
+            if (!groups[groupId]) groups[groupId] = [];
+            groups[groupId].push(msg);
         });
 
-        // Map threads to a clean format
-        const threadedList = Object.entries(threads).map(([id, msgs]) => ({
+        // Map groups to a clean format
+        const finalResults = Object.entries(groups).map(([id, msgs]) => ({
             id,
             lastMessage: msgs[0],
             messages: msgs.reverse(), // History in chronological order
@@ -37,21 +41,7 @@ export async function GET(req: NextRequest) {
             source: msgs[0].source,
             count: msgs.length,
             updatedAt: msgs[0].createdAt
-        }));
-
-        // Combine with unthreaded (each unthreaded msg is its own 'thread')
-        const finalResults = [
-            ...threadedList,
-            ...unthreaded.map(msg => ({
-                id: msg.id,
-                lastMessage: msg,
-                messages: [msg],
-                sender: msg.sender,
-                source: msg.source,
-                count: 1,
-                updatedAt: msg.createdAt
-            }))
-        ].sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        })).sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
         return NextResponse.json(finalResults);
     } catch (error: any) {

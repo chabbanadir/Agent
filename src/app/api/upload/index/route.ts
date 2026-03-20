@@ -88,7 +88,7 @@ export async function POST(req: NextRequest) {
         const session = await getServerSession(authOptions);
         const tenantId = session?.user?.tenantId || "default-tenant";
 
-        const { documentId } = await req.json();
+        const { documentId } = (await req.json()) as { documentId: string };
 
         if (!documentId) {
             return NextResponse.json({ error: "No documentId provided" }, { status: 400 });
@@ -108,11 +108,11 @@ export async function POST(req: NextRequest) {
         // If content is empty and we have raw content, parse it now (deferred parsing)
         if (!content && doc.rawContent) {
             try {
-                content = await extractText(doc.rawContent, doc.mimeType || "application/pdf");
+                content = await extractText(Buffer.from(doc.rawContent as Uint8Array), doc.mimeType || "application/pdf");
                 // Update the document with the extracted content
                 await prisma.document.update({
                     where: { id: documentId },
-                    data: { content }
+                    data: { content: content as string }
                 });
             } catch (err: any) {
                 await prisma.document.update({
