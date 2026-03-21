@@ -24,15 +24,28 @@ ${context.join("\n")}
 Be helpful, concise, and always include a Call-To-Action (CTA) at the end.`;
 
     console.log(`[Clerk] Generating response with ${context.length} context items...`);
+
+    // Add thought about response generation
+    const thoughtMessage = {
+        role: "thought",
+        content: `[Clerk] Generating response using ${context.length > 0 ? context.length : "NO"} context chunks. ${context.length === 0 ? "Advising user that specialized domain knowledge is unavailable." : ""}`
+    };
+
+    // Filter messages to only include those compatible with LLM providers (Human, AI, System)
+    // We remove our custom 'thought' messages from the history sent to the LLM
+    const chatHistory = messages.filter((m: any) => m.role !== 'thought' && m.role !== 'system_thought');
+
     const response = await clerk.invoke([
         new SystemMessage(systemPrompt),
-        ...messages
+        ...chatHistory
     ]);
 
     console.log(`[Clerk] generated response: ${response.content.toString().substring(0, 50)}...`);
 
+
     return {
-        messages: [response],
+        messages: [thoughtMessage, response],
         next: "END"
     };
+
 }

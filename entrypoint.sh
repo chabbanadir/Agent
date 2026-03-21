@@ -1,18 +1,12 @@
 #!/bin/sh
 set -e
 
-echo "⏳ Running database schema push..."
+echo "⏳ Regenerating Prisma Client..."
+npx prisma generate --schema=./prisma/schema.prisma
 
-# Use --url to bypass prisma.config.ts (which requires TypeScript runtime)
-# DATABASE_URL is injected by docker-compose into this container
-until node_modules/.bin/prisma db push \
-  --schema=./prisma/schema.prisma \
-  --url="$DATABASE_URL" \
-  --accept-data-loss; do
-  echo "⏳ Database not ready, retrying in 3s..."
-  sleep 3
-done
+echo "⏳ Ensuring default tenant exists..."
+node scripts/init-db.js
 
-echo "✅ Prisma client regenerated"
+echo "✅ Database initialized"
 echo "🚀 Starting application..."
 exec "$@"

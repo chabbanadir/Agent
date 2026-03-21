@@ -150,6 +150,11 @@ export class GmailService {
                 where: { id: this.tenantId },
             }) as any;
 
+            if (tenant && tenant.isSyncEnabled === false) {
+                console.log(`[Gmail] Sync is disabled for tenant: ${this.tenantId}`);
+                return { processed: 0, status: "disabled" };
+            }
+
             const autoReply = tenant?.gmailSettings?.autoReply !== false;
             const gmail = google.gmail({ version: "v1", auth });
 

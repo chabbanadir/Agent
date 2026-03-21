@@ -167,6 +167,21 @@ export default function AgentConfigPage() {
                                     />
                                 </section>
                                 <section className="space-y-4">
+                                    <label className="text-xs font-black uppercase tracking-widest text-slate-500">Agent Status</label>
+                                    <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-950 border border-slate-800">
+                                        <div className="flex-1">
+                                            <p className="text-sm font-bold text-white">Active for Ecosystem</p>
+                                            <p className="text-[10px] text-slate-500 tracking-tight">Allow the orchestrator to route tasks to this identity.</p>
+                                        </div>
+                                        <input
+                                            type="checkbox"
+                                            checked={editingAgent.isActive}
+                                            onChange={(e) => setEditingAgent({ ...editingAgent, isActive: e.target.checked })}
+                                            className="w-6 h-6 accent-indigo-500 cursor-pointer"
+                                        />
+                                    </div>
+                                </section>
+                                <section className="space-y-4">
                                     <label className="text-xs font-black uppercase tracking-widest text-slate-500">Neural Engine</label>
                                     <div className="flex gap-2">
                                         {providers.map((p) => (

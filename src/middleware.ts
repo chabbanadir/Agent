@@ -1,4 +1,3 @@
-/*
 import { withAuth } from "next-auth/middleware";
 
 export default withAuth({
@@ -6,10 +5,8 @@ export default withAuth({
         signIn: "/auth/signin",
     },
 });
-*/
-
-export default function middleware() { }
 
 export const config = {
-    matcher: [],
+    matcher: ["/dashboard/:path*"],
 };
+

@@ -32,12 +32,19 @@ export async function POST(req: NextRequest) {
         const tenantId = session?.user?.tenantId || "default-tenant";
 
         const body = await req.json();
-        const { id, name, provider, model, persuasionLevel, systemPrompt } = body;
+        const { id, name, provider, model, persuasionLevel, systemPrompt, isActive } = body;
 
         if (id) {
             const updated = await prisma.agent.update({
                 where: { id, tenantId },
-                data: { name, provider, model, persuasionLevel, systemPrompt }
+                data: {
+                    name,
+                    provider,
+                    model,
+                    persuasionLevel,
+                    systemPrompt,
+                    isActive: isActive !== undefined ? isActive : true
+                }
             });
             return NextResponse.json(updated);
         } else {

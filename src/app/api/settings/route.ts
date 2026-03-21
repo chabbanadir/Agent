@@ -22,7 +22,8 @@ export async function GET(req: NextRequest) {
             gmailEmail: tenant.gmailEmail || "",
             whatsappNumber: tenant.whatsappNumber || "",
             gmailSettings: tenant.gmailSettings || {},
-            whatsappSettings: tenant.whatsappSettings || {}
+            whatsappSettings: tenant.whatsappSettings || {},
+            isSyncEnabled: tenant.isSyncEnabled ?? true
         });
     } catch (error: any) {
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { gmailEmail, whatsappNumber, gmailSettings, whatsappSettings } = body;
+        const { gmailEmail, whatsappNumber, gmailSettings, whatsappSettings, isSyncEnabled } = body;
 
         const updated = await prisma.tenant.update({
             where: { id: session.user.tenantId },
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
                 ...(whatsappNumber !== undefined && { whatsappNumber }),
                 ...(gmailSettings && { gmailSettings }),
                 ...(whatsappSettings && { whatsappSettings }),
+                ...(isSyncEnabled !== undefined && { isSyncEnabled }),
             }
         });
 
@@ -53,7 +55,8 @@ export async function POST(req: NextRequest) {
             gmailEmail: (updated as any).gmailEmail || "",
             whatsappNumber: (updated as any).whatsappNumber || "",
             gmailSettings: (updated as any).gmailSettings || {},
-            whatsappSettings: (updated as any).whatsappSettings || {}
+            whatsappSettings: (updated as any).whatsappSettings || {},
+            isSyncEnabled: (updated as any).isSyncEnabled ?? true
         });
     } catch (error: any) {
         console.error("[Settings POST]", error);

@@ -21,20 +21,37 @@ export async function researcherNode(state: any) {
   const queryEmbedding = await embeddings.embedQuery(lastMessage.toString());
 
   // 2. Search for similar chunks in pgvector
+  const similarityThreshold = 0.5; // Adjusted for cosine distance (<=>). Lower is closer.
+
   const similarChunks: any[] = await prisma.$queryRaw`
-    SELECT c.content, d.name as documentName
+    SELECT c.content, d.name as documentName, (1 - (c.vector <=> ${JSON.stringify(queryEmbedding)}::vector)) as similarity
     FROM "DocumentChunk" c
     JOIN "Document" d ON c."documentId" = d."id"
     WHERE d."tenantId" = ${tenantId}
+    AND (1 - (c.vector <=> ${JSON.stringify(queryEmbedding)}::vector)) > ${similarityThreshold}
     ORDER BY c.vector <=> ${JSON.stringify(queryEmbedding)}::vector
     LIMIT 5;
   `;
 
-  console.log(`[Researcher] Found ${similarChunks.length} relevant context chunks.`);
+  console.log(`[Researcher] Found ${similarChunks.length} relevant context chunks above threshold ${similarityThreshold}.`);
+
+  const thoughts = [
+    {
+      role: "thought",
+      content: `[Researcher] Searching for context related to: "${lastMessage.toString().substring(0, 100)}..."`
+    },
+    {
+      role: "thought",
+      content: `[Researcher] Found ${similarChunks.length} chunks with similarity > ${similarityThreshold}.`
+    }
+  ];
+
   const context = similarChunks.map(chunk => `[Source: ${chunk.documentName}]\n${chunk.content}`).join("\n\n");
 
   return {
+    messages: thoughts,
     context: [context],
     next: "respond"
   };
+
 }

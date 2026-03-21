@@ -1,3 +1,4 @@
+// Re-initializing Prisma Client for schema parity
 import { PrismaClient } from '@prisma/client'
 import { PrismaPg } from '@prisma/adapter-pg'
 import { Pool } from 'pg'

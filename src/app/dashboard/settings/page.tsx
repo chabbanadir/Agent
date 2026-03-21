@@ -13,6 +13,7 @@ export default function SettingsPage() {
     const [settings, setSettings] = useState({
         gmailEmail: '',
         whatsappNumber: '',
+        isSyncEnabled: true,
         gmailSettings: { checkInterval: 60, autoReply: true },
         whatsappSettings: { enabled: true, webhookUrl: '' }
     });
@@ -26,6 +27,7 @@ export default function SettingsPage() {
                     setSettings({
                         gmailEmail: data.gmailEmail || '',
                         whatsappNumber: data.whatsappNumber || '',
+                        isSyncEnabled: data.isSyncEnabled !== undefined ? data.isSyncEnabled : true,
                         gmailSettings: {
                             checkInterval: data.gmailSettings?.checkInterval || 60,
                             autoReply: data.gmailSettings?.autoReply !== undefined ? data.gmailSettings.autoReply : true,
@@ -152,6 +154,20 @@ export default function SettingsPage() {
                             <p className="text-xs text-slate-600 mt-1">
                                 💡 Click <strong>Sync Now</strong> to save your email and run a sync. Your settings are always saved first.
                             </p>
+                        </div>
+
+                        <div className="flex items-center gap-6 p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/20">
+                            <div className="flex-1">
+                                <div className="flex items-center gap-2">
+                                    <p className="font-bold text-white">Master Autonomous Sync</p>
+                                    <div className={`w-2 h-2 rounded-full ${settings.isSyncEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700'}`} />
+                                </div>
+                                <p className="text-xs text-slate-400">Enable or disable background email polling and agent processing for this business.</p>
+                            </div>
+                            <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${settings.isSyncEnabled ? 'bg-indigo-600' : 'bg-slate-800'}`}
+                                onClick={() => setSettings({ ...settings, isSyncEnabled: !settings.isSyncEnabled })}>
+                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.isSyncEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                            </div>
                         </div>
 
                         <div className="flex items-center gap-6 p-4 rounded-2xl bg-slate-950 border border-slate-800">

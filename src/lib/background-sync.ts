@@ -25,7 +25,10 @@ export function startAutonomousWorker() {
 async function runSyncForAllTenants() {
     try {
         const tenants = await prisma.tenant.findMany({
-            where: { gmailEmail: { not: null } }
+            where: {
+                gmailEmail: { not: null },
+                isSyncEnabled: true
+            }
         });
 
         console.log(`🚀 [Worker] Polling for ${tenants.length} tenants...`);
