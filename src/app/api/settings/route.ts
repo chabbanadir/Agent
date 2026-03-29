@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
         }
 
         return NextResponse.json({
+            name: tenant.name,
             gmailEmail: tenant.gmailEmail || "",
             whatsappNumber: tenant.whatsappNumber || "",
             gmailSettings: tenant.gmailSettings || {},
@@ -38,11 +39,12 @@ export async function POST(req: NextRequest) {
         }
 
         const body = await req.json();
-        const { gmailEmail, whatsappNumber, gmailSettings, whatsappSettings, isSyncEnabled } = body;
+        const { name, gmailEmail, whatsappNumber, gmailSettings, whatsappSettings, isSyncEnabled } = body;
 
         const updated = await prisma.tenant.update({
             where: { id: session.user.tenantId },
             data: {
+                ...(name !== undefined && { name }),
                 ...(gmailEmail !== undefined && { gmailEmail }),
                 ...(whatsappNumber !== undefined && { whatsappNumber }),
                 ...(gmailSettings && { gmailSettings }),

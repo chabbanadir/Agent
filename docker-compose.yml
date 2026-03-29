@@ -9,6 +9,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      - .:/app
     networks:
       - internal
 
@@ -34,7 +36,10 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL}
+      - GMAIL_PUBSUB_TOPIC=${GMAIL_PUBSUB_TOPIC}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
     depends_on:
       migrate:
         condition: service_completed_successfully

@@ -8,22 +8,33 @@ datasource db {
 }
 
 model Tenant {
-  id               String     @id @default(cuid())
-  name             String
-  email            String     @unique
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
-  gmailEmail       String?
-  isSyncEnabled    Boolean    @default(true)
-  gmailSettings    Json?
-  whatsappNumber   String?
-  whatsappSettings Json?
-  aiModels         AIModel[]
-  agents           Agent[]
-  documents        Document[]
-  messages         Message[]
-  users            User[]
-  simulations      Simulation[]
+  id                 String              @id @default(cuid())
+  name               String
+  email              String              @unique
+  companyDescription String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  gmailEmail         String?
+  isSyncEnabled      Boolean             @default(true)
+  gmailSettings      Json?
+  whatsappNumber     String?
+  whatsappSettings   Json?
+  isSyncing          Boolean             @default(false)
+  lastSyncAt         DateTime?
+  escalationChannel  String?             @default("EMAIL")
+  managerEmail       String?
+  managerWhatsapp    String?
+  aiModels           AIModel[]
+  agents             Agent[]
+  apiKeys            ApiKey[]
+  channelAccounts    ChannelAccount[]
+  documents          Document[]
+  messages           Message[]
+  simulations        Simulation[]
+  users              User[]
+  whatsappSessions   WhatsAppSession[]
+  blacklistedNumbers BlacklistedNumber[]
+  conversationFacts  ConversationFact[]
 }
 
 model Account {
@@ -73,20 +84,61 @@ model VerificationToken {
 }
 
 model Agent {
-  id              String   @id @default(cuid())
-  tenantId        String
-  name            String
-  description     String?
-  provider        String   @default("openai")
-  model           String   @default("gpt-4o")
-  systemPrompt    String?
-  persuasionLevel Float    @default(0.5)
-  isActive        Boolean  @default(true)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  tenant          Tenant   @relation(fields: [tenantId], references: [id])
+  id                String         @id @default(cuid())
+  tenantId          String
+  name              String
+  description       String?
+  provider          String         @default("openai")
+  model             String         @default("gpt-4o")
+  systemPrompt      String?
+  config            Json?
+  persuasionLevel   Float          @default(0.5)
+  isActive          Boolean        @default(true)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  escalationChannel String?        @default("EMAIL")
+  managerEmail      String?
+  managerWhatsapp   String?
+  tenant            Tenant         @relation(fields: [tenantId], references: [id])
+  channels          AgentChannel[]
 
   @@index([tenantId])
+}
+
+model ChannelAccount {
+  id                String             @id @default(cuid())
+  tenantId          String
+  type              String
+  name              String?
+  address           String
+  credentials       Json?
+  config            Json?
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  lastHistoryId     String?
+  lastWatchAt       DateTime?
+  agentChannels     AgentChannel[]
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages          Message[]          @relation("AccountMessages")
+  conversationFacts ConversationFact[]
+
+  @@unique([tenantId, address, type])
+  @@index([tenantId])
+}
+
+model AgentChannel {
+  id               String          @id @default(cuid())
+  agentId          String
+  channelAccountId String?
+  channel          String
+  systemPrompt     String?
+  config           Json?
+  isActive         Boolean         @default(true)
+  agent            Agent           @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  channelAccount   ChannelAccount? @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+
+  @@unique([agentId, channelAccountId])
 }
 
 model Document {
@@ -134,26 +186,37 @@ model AIModel {
 }
 
 model Message {
-  id              String    @id @default(cuid())
-  tenantId        String
-  externalId      String?   @unique
-  threadId        String?
-  source          String
-  sender          String
-  content         String
-  role            String    @default("user")
-  status          String    @default("RECEIVED")
-  category        String?
-  trace           Json?
-  parentMessageId String?
-  createdAt       DateTime  @default(now())
-  parentMessage   Message?  @relation("MessageThread", fields: [parentMessageId], references: [id])
-  replies         Message[] @relation("MessageThread")
-  tenant          Tenant    @relation(fields: [tenantId], references: [id])
+  id               String          @id @default(cuid())
+  tenantId         String
+  channelAccountId String?
+  externalId       String?         @unique
+  threadId         String?
+  source           String
+  sender           String
+  content          String
+  role             String          @default("user")
+  status           String          @default("RECEIVED")
+  bookingStatus    String          @default("NONE")
+  category         String?
+  trace            Json?
+  parentMessageId  String?
+  createdAt        DateTime        @default(now())
+  lastProcessedAt  DateTime?
+  retryCount       Int             @default(0)
+  rfcMessageId     String?
+  draftContent     String?
+  isEscalation     Boolean         @default(false)
+  isGhostReply     Boolean         @default(false)
+  senderName       String?
+  channelAccount   ChannelAccount? @relation("AccountMessages", fields: [channelAccountId], references: [id], onDelete: Cascade)
+  parentMessage    Message?        @relation("MessageThread", fields: [parentMessageId], references: [id])
+  replies          Message[]       @relation("MessageThread")
+  tenant           Tenant          @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
   @@index([sender])
   @@index([threadId])
+  @@index([rfcMessageId])
 }
 
 model Simulation {
@@ -172,3 +235,55 @@ model Simulation {
   @@index([tenantId])
 }
 
+model ApiKey {
+  id        String    @id @default(cuid())
+  tenantId  String
+  name      String
+  key       String    @unique
+  createdAt DateTime  @default(now())
+  lastUsed  DateTime?
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
+model WhatsAppSession {
+  id        String   @id @default(cuid())
+  tenantId  String
+  address   String   @unique
+  data      Json?
+  status    String   @default("DISCONNECTED")
+  qr        String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model BlacklistedNumber {
+  id        String   @id @default(cuid())
+  tenantId  String
+  channel   String   @default("WHATSAPP")
+  address   String
+  reason    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, channel, address])
+  @@index([tenantId])
+}
+
+model ConversationFact {
+  id               String   @id @default(cuid())
+  tenantId         String
+  channelAccountId String?
+  senderUri        String
+  factSummary      String
+  createdAt        DateTime @default(now())
+
+  channelAccount ChannelAccount? @relation(fields: [channelAccountId], references: [id], onDelete: Cascade)
+  tenant         Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([senderUri])
+}

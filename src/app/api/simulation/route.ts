@@ -11,16 +11,49 @@ export async function GET(req: NextRequest) {
     try {
         const session = await getServerSession(authOptions);
         const tenantId = session?.user?.tenantId || "default-tenant";
+        const { searchParams } = new URL(req.url);
+        const agentId = searchParams.get('agentId');
 
-        console.log(`[Simulation] Fetching history for tenant: ${tenantId}`);
+        const [simulations, realAssistantMessages] = await Promise.all([
+            prisma.simulation.findMany({
+                where: {
+                    tenantId,
+                    ...(agentId ? { agentId } : {})
+                },
+                orderBy: { createdAt: 'desc' },
+                take: 10
+            }),
+            prisma.message.findMany({
+                where: {
+                    tenantId,
+                    role: "assistant"
+                },
+                orderBy: { createdAt: 'desc' },
+                take: 10,
+                include: { parentMessage: true }
+            })
+        ]);
 
-        const history = await prisma.simulation.findMany({
-            where: { tenantId },
-            orderBy: { createdAt: 'desc' },
-            take: 20
-        });
+        // Map real messages to simulation format for UI compatibility
+        const mappedMessages = realAssistantMessages.map(m => ({
+            id: m.id,
+            tenantId: m.tenantId,
+            agentId: null,
+            sender: m.parentMessage?.sender || m.sender,
+            input: m.parentMessage?.content || "No original message found",
+            output: m.content,
+            latency: null,
+            tokens: null,
+            trace: m.trace as any,
+            createdAt: m.createdAt,
+            isReal: true
+        }));
 
-        return NextResponse.json(history);
+        const combined = [...simulations, ...mappedMessages]
+            .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+            .slice(0, 20);
+
+        return NextResponse.json(combined);
     } catch (error: any) {
         console.error("[Simulation] GET Error:", error);
         return NextResponse.json({ error: error.message }, { status: 500 });
@@ -31,7 +64,7 @@ export async function POST(req: Request) {
     try {
         const session = await getServerSession(authOptions);
         const tenantId = session?.user?.tenantId || "default-tenant";
-        const { sender, message, agentId } = await req.json() as { sender: string; message: string; agentId?: string };
+        const { sender, message, agentId, channel } = await req.json() as { sender: string; message: string; agentId?: string; channel?: string };
 
         if (!message) {
             return NextResponse.json({ error: "Message is required" }, { status: 400 });
@@ -55,6 +88,7 @@ export async function POST(req: Request) {
                         messages: [new HumanMessage(message)],
                         tenantId: tenantId,
                         agentId: agentId,
+                        channel: channel,
                         next: "orchestrate",
                         context: []
                     }, {

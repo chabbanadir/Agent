@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Save, Mail, MessageCircle, ShieldCheck, Loader2, CheckCircle2, XCircle } from 'lucide-react';
+import { Save, Mail, MessageCircle, ShieldCheck, Loader2, CheckCircle2, XCircle, KeyRound, Copy, Plus, Trash2, Building2, Sparkles } from 'lucide-react';
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -10,7 +10,10 @@ export default function SettingsPage() {
     const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
     const [syncing, setSyncing] = useState(false);
     const [syncResult, setSyncResult] = useState<string | null>(null);
+    const [apiKeys, setApiKeys] = useState<any[]>([]);
+    const [generatingKey, setGeneratingKey] = useState(false);
     const [settings, setSettings] = useState({
+        name: '',
         gmailEmail: '',
         whatsappNumber: '',
         isSyncEnabled: true,
@@ -25,6 +28,7 @@ export default function SettingsPage() {
             .then(data => {
                 if (data && !data.error) {
                     setSettings({
+                        name: data.name || '',
                         gmailEmail: data.gmailEmail || '',
                         whatsappNumber: data.whatsappNumber || '',
                         isSyncEnabled: data.isSyncEnabled !== undefined ? data.isSyncEnabled : true,
@@ -41,6 +45,13 @@ export default function SettingsPage() {
             })
             .catch(console.error)
             .finally(() => setLoading(false));
+
+        fetch('/api/settings/apikeys')
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) setApiKeys(data);
+            })
+            .catch(console.error);
     }, []);
 
     const handleSave = async (): Promise<boolean> => {
@@ -84,6 +95,50 @@ export default function SettingsPage() {
         }
     };
 
+    const handleGenerateApiKey = async () => {
+        setGeneratingKey(true);
+        try {
+            const defaultName = `API Token - ${new Date().toISOString().split('T')[0]}`;
+            const keyName = window.prompt("Enter a label for this API Token:", defaultName) || defaultName;
+
+            const res = await fetch('/api/settings/apikeys', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: keyName })
+            });
+
+            if (!res.ok) throw new Error('Failed to generate key');
+            const data = await res.json();
+            if (data.apiKey) {
+                setApiKeys([data.apiKey, ...apiKeys]);
+            } else if (data.key) {
+                // Handle different response format based on backend standard (either data.apiKey or the object itself)
+                setApiKeys([data, ...apiKeys]);
+            }
+        } catch (err) {
+            console.error(err);
+            window.alert("Failed to generate API Key. Check server logs.");
+        } finally {
+            setGeneratingKey(false);
+        }
+    };
+
+    const handleDeleteApiKey = async (id: string) => {
+        try {
+            const res = await fetch(`/api/settings/apikeys?id=${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                setApiKeys(apiKeys.filter(k => k.id !== id));
+            }
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const copyToClipboard = (text: string) => {
+        navigator.clipboard.writeText(text);
+        // Optional: show a tiny toast or UI feedback here
+    };
+
     if (loading) {
         return (
             <div className="h-full flex items-center justify-center">
@@ -98,135 +153,129 @@ export default function SettingsPage() {
             'bg-indigo-600 hover:bg-indigo-500';
 
     return (
-        <div className="space-y-12 animate-fade-in max-w-4xl text-white pb-24">
-            <header className="flex items-center justify-between">
+        <div className="space-y-12 animate-fade-in w-full text-white pb-24">
+            <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
                 <div>
-                    <h1 className="text-4xl font-black text-white tracking-tight mb-2">Integrations &amp; Settings</h1>
-                    <p className="text-slate-500">Configure how your agents connect to the outside world.</p>
+                    <h1 className="text-4xl font-black text-white tracking-tight mb-2">Workspace Settings</h1>
+                    <p className="text-slate-500">Manage your organization's identity and API access security.</p>
                 </div>
                 <button
                     onClick={handleSave}
                     disabled={saveStatus === 'saving'}
-                    className={`px-6 py-3 rounded-xl ${saveBtnColor} text-white font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center gap-2 disabled:opacity-50`}
+                    className={`px-6 py-3 rounded-xl min-w-[180px] justify-center ${saveBtnColor} text-white font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center gap-2 disabled:opacity-50`}
                 >
                     {saveStatus === 'saving' ? <Loader2 className="animate-spin" size={20} /> : <SaveIcon size={20} />}
-                    {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : saveStatus === 'error' ? 'Error – Retry' : 'Save Settings'}
+                    {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : saveStatus === 'error' ? 'Error' : 'Save Changes'}
                 </button>
             </header>
 
-            <div className="space-y-8">
-                {/* Gmail Integration */}
-                <section className="p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-6">
-                    <div className="flex items-center justify-between">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 items-start">
+                {/* LEFT COLUMN */}
+                <div className="space-y-8">
+                    {/* Organization Identity */}
+                    <section className="p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-6 shadow-xl shadow-slate-950/50">
                         <div className="flex items-center gap-3 text-white">
-                            <Mail className="text-rose-400" />
-                            <h2 className="text-xl font-bold">Gmail Inbound Integration</h2>
+                            <Building2 className="text-indigo-400" />
+                            <h2 className="text-xl font-bold">Organization Identity</h2>
                         </div>
-                        <span className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider ${settings.gmailEmail ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
-                            {settings.gmailEmail ? 'Connected' : 'Not Configured'}
-                        </span>
-                    </div>
 
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-sm font-bold text-slate-400 uppercase tracking-wider">Business Email</label>
-                            <div className="flex gap-4">
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <label className="text-sm font-bold text-slate-400 uppercase tracking-wider">Public Workspace Name</label>
                                 <input
-                                    type="email"
-                                    value={settings.gmailEmail}
-                                    onChange={(e) => setSettings({ ...settings, gmailEmail: e.target.value })}
-                                    placeholder="support@acme.com"
-                                    className="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 text-slate-300 focus:border-indigo-500 outline-none transition-all"
+                                    type="text"
+                                    value={settings.name}
+                                    onChange={(e) => setSettings({ ...settings, name: e.target.value })}
+                                    placeholder="Acme Corp"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-slate-300 focus:border-indigo-500 outline-none transition-all"
                                 />
-                                <button
-                                    onClick={handleSync}
-                                    disabled={syncing || saveStatus === 'saving' || !settings.gmailEmail}
-                                    className="px-6 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold transition-all border border-slate-700 disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    {syncing ? <Loader2 className="animate-spin" size={18} /> : 'Sync Now'}
-                                </button>
-                            </div>
-                            {syncResult && (
-                                <p className={`text-sm mt-2 px-4 py-2 rounded-lg ${syncResult.startsWith('✅') ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}`}>
-                                    {syncResult}
+                                <p className="text-xs text-slate-500">
+                                    Display name used across your dashboard and communication templates.
                                 </p>
-                            )}
-                            <p className="text-xs text-slate-600 mt-1">
-                                💡 Click <strong>Sync Now</strong> to save your email and run a sync. Your settings are always saved first.
+                            </div>
+                        </div>
+                    </section>
+
+                    {/* Security */}
+                    <section className="p-8 rounded-3xl bg-indigo-500/5 border border-indigo-500/10 space-y-6 text-center">
+                        <div className="w-16 h-16 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 mx-auto mb-4">
+                            <ShieldCheck size={32} />
+                        </div>
+                        <h2 className="text-xl font-bold text-white">Enterprise Security</h2>
+                        <p className="text-slate-400 max-w-lg mx-auto leading-relaxed">
+                            All communication credentials and external tokens are strictly encrypted using AES-256-GCM.
+                            Our infrastructure follows zero-trust principles to ensure your data stays private.
+                        </p>
+                    </section>
+                </div>
+
+                {/* RIGHT COLUMN */}
+                <div className="space-y-8">
+                    {/* External Custom Web API Keys */}
+                    <section className="p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-6 shadow-xl shadow-slate-950/50">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3 text-white">
+                                <KeyRound className="text-indigo-400" />
+                                <h2 className="text-xl font-bold">API Tokens</h2>
+                            </div>
+                            <button
+                                onClick={handleGenerateApiKey}
+                                disabled={generatingKey}
+                                className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold transition-all shadow-lg text-xs flex items-center gap-2 disabled:opacity-50"
+                            >
+                                {generatingKey ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
+                                New Token
+                            </button>
+                        </div>
+
+                        <div className="space-y-4">
+                            <p className="text-xs text-slate-500">
+                                Use these tokens to authenticate external integrations with the <code className="text-indigo-400">/api/external/chat</code> endpoint.
                             </p>
-                        </div>
 
-                        <div className="flex items-center gap-6 p-4 rounded-2xl bg-indigo-500/10 border border-indigo-500/20">
-                            <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                    <p className="font-bold text-white">Master Autonomous Sync</p>
-                                    <div className={`w-2 h-2 rounded-full ${settings.isSyncEnabled ? 'bg-emerald-500 animate-pulse' : 'bg-slate-700'}`} />
-                                </div>
-                                <p className="text-xs text-slate-400">Enable or disable background email polling and agent processing for this business.</p>
+                            <div className="space-y-3">
+                                {apiKeys.length === 0 ? (
+                                    <div className="p-6 text-center border-2 border-dashed border-slate-800 rounded-2xl">
+                                        <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">No keys generated</p>
+                                    </div>
+                                ) : (
+                                    apiKeys.map((key) => (
+                                        <div key={key.id} className="flex flex-col items-start justify-between gap-4 p-4 rounded-2xl bg-slate-950 border border-slate-800 hover:border-indigo-500/30 transition-all group">
+                                            <div className="w-full space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-[10px] font-black uppercase text-indigo-400 tracking-widest">{key.name || 'Personal Token'}</span>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            onClick={() => copyToClipboard(key.key)}
+                                                            className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-all border border-slate-700"
+                                                            title="Copy Token"
+                                                        >
+                                                            <Copy size={14} />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteApiKey(key.id)}
+                                                            className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-500 transition-all border border-red-500/20"
+                                                            title="Revoke Token"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-white font-mono text-[11px] bg-slate-900/80 px-3 py-3 rounded-xl border border-slate-800 overflow-hidden">
+                                                    <span className="truncate">{key.key}</span>
+                                                </div>
+                                                <div className="flex items-center gap-4 text-[9px] font-bold text-slate-600 tracking-widest">
+                                                    <span>Added: {new Date(key.createdAt).toLocaleDateString()}</span>
+                                                    {key.lastUsed && <span className="text-emerald-500/70 uppercase">In Use: {new Date(key.lastUsed).toLocaleTimeString()}</span>}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
                             </div>
-                            <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${settings.isSyncEnabled ? 'bg-indigo-600' : 'bg-slate-800'}`}
-                                onClick={() => setSettings({ ...settings, isSyncEnabled: !settings.isSyncEnabled })}>
-                                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${settings.isSyncEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                            </div>
                         </div>
-
-                        <div className="flex items-center gap-6 p-4 rounded-2xl bg-slate-950 border border-slate-800">
-                            <div className="flex-1">
-                                <p className="font-bold text-white mb-1">Auto-Response Monitoring</p>
-                                <p className="text-xs text-slate-500">Allow agent to check and reply to unread emails automatically.</p>
-                            </div>
-                            <input
-                                type="checkbox"
-                                checked={settings.gmailSettings.autoReply}
-                                onChange={(e) => setSettings({ ...settings, gmailSettings: { ...settings.gmailSettings, autoReply: e.target.checked } })}
-                                className="w-6 h-6 accent-indigo-500 cursor-pointer"
-                            />
-                        </div>
-                    </div>
-                </section>
-
-                {/* WhatsApp Integration */}
-                <section className="p-8 rounded-3xl bg-slate-900 border border-slate-800 space-y-6">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3 text-white">
-                            <MessageCircle className="text-emerald-400" />
-                            <h2 className="text-xl font-bold">WhatsApp Business API</h2>
-                        </div>
-                        <span className={`px-3 py-1 rounded-lg text-xs font-bold uppercase tracking-wider ${settings.whatsappNumber ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
-                            {settings.whatsappNumber ? 'Active' : 'Disconnected'}
-                        </span>
-                    </div>
-
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-sm font-bold text-slate-400 uppercase tracking-wider">Assigned Number</label>
-                            <input
-                                type="text"
-                                value={settings.whatsappNumber}
-                                onChange={(e) => setSettings({ ...settings, whatsappNumber: e.target.value })}
-                                placeholder="+1 234 567 8900"
-                                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-slate-300 focus:border-indigo-500 outline-none transition-all"
-                            />
-                        </div>
-
-                        <div className="group p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-2">
-                            <p className="font-bold text-white">Webhook Configuration</p>
-                            <p className="text-xs text-slate-500 mb-4">Point your Meta Business webhook to this endpoint.</p>
-                            <code className="block bg-slate-900 p-3 rounded-lg text-indigo-400 text-xs font-mono break-all border border-indigo-500/20">
-                                https://api.agentclaw.com/webhooks/whatsapp/{settings.whatsappNumber || 'your-number'}
-                            </code>
-                        </div>
-                    </div>
-                </section>
-
-                {/* Security */}
-                <section className="p-8 rounded-3xl bg-indigo-500/5 border border-indigo-500/10 space-y-6 text-center">
-                    <div className="w-16 h-16 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 mx-auto mb-4">
-                        <ShieldCheck size={32} />
-                    </div>
-                    <h2 className="text-xl font-bold text-white">Advanced Security Protections</h2>
-                    <p className="text-slate-400 max-w-lg mx-auto">All integration tokens are encrypted using AES-256-GCM. We never store raw passwords or unencrypted OAuth tokens.</p>
-                </section>
+                    </section>
+                </div>
             </div>
         </div>
     );

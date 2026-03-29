@@ -1,309 +1,373 @@
 import { google } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import prisma from "@/lib/prisma";
-import { orchestrate } from "../agents/orchestrator";
+import { TurnManager } from "@/lib/TurnManager";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Decode a Gmail message part from base64url */
 function decodeBase64(encoded: string): string {
-    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
-    return Buffer.from(base64, "base64").toString("utf-8");
+    if (!encoded) return "";
+    try {
+        const buff = Buffer.from(encoded.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+        return buff.toString("utf-8");
+    } catch {
+        return "";
+    }
 }
 
-/** Extract plain-text body from a Gmail message payload */
+/** Strips quoted email history (e.g., "On ... wrote:") from the text. */
+function stripQuotedText(text: string): string {
+    if (!text) return "";
+    
+    const markers = [
+        /^(?:\s*On\s+.*\s+wrote:|\s*Le\s+.*\s+a\s+écrit\s*:)/im,
+        /^-*\s*(?:Original Message|Message d'origine)\s*-*/im,
+        /^\s*From:\s+.*$/im,
+        /^\s*De\s*:\s+.*$/im,
+    ];
+
+    for (const marker of markers) {
+        const match = text.match(marker);
+        if (match && match.index !== undefined) {
+            return text.substring(0, match.index).trim();
+        }
+    }
+
+    return text.trim();
+}
+
 function extractBody(payload: any): string {
     if (!payload) return "";
+    let body = "";
 
-    // Direct body
-    if (payload.body?.data) {
-        let text = decodeBase64(payload.body.data);
-        // If it looks like HTML, strip it
-        if (text.includes("<") && text.includes(">")) {
-            text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
-            text = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
-            text = text.replace(/<[^>]+>/g, " ");
-        }
-        return text.replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
-    }
-
-    // Multipart — find text/plain first, fall back to text/html
     if (payload.parts) {
-        const textPart = payload.parts.find((p: any) => p.mimeType === "text/plain");
-        if (textPart?.body?.data) return decodeBase64(textPart.body.data).replace(/\s+/g, " ").trim();
-
-        const htmlPart = payload.parts.find((p: any) => p.mimeType === "text/html");
-        if (htmlPart?.body?.data) {
-            let html = decodeBase64(htmlPart.body.data);
-            html = html.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
-            html = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "");
-            html = html.replace(/<[^>]+>/g, " ");
-            return html.replace(/&nbsp;/g, " ").replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
-        }
-
-        // Recurse into nested multipart
         for (const part of payload.parts) {
-            const body = extractBody(part);
-            if (body) return body;
+            if (part.mimeType === "text/plain" && part.body?.data) {
+                body += decodeBase64(part.body.data);
+            } else if (part.parts) {
+                body += extractBody(part);
+            }
         }
+    } else if (payload.body?.data) {
+        body = decodeBase64(payload.body.data);
     }
 
-    return "";
+    return body;
 }
 
-/** Get header value from Gmail message headers */
 function getHeader(headers: any[], name: string): string {
-    return headers?.find((h: any) => h.name.toLowerCase() === name.toLowerCase())?.value || "";
+    const header = headers.find(h => h.name?.toLowerCase() === name.toLowerCase());
+    return header ? header.value : "";
 }
 
-/** Build a raw RFC-2822 email string for sending via Gmail API */
-function buildRawEmail(to: string, from: string, subject: string, replyText: string, threadId?: string): string {
-    const lines = [
-        `From: ${from}`,
-        `To: ${to}`,
-        `Subject: Re: ${subject}`,
-        `Content-Type: text/plain; charset=utf-8`,
-        ``,
-        replyText,
-    ];
-    return Buffer.from(lines.join("\r\n")).toString("base64url");
+/** Check if an email should be skipped based on headers/automation (Mailing lists, bots) */
+function shouldSkipMessage(headers: any[], messageId: string): boolean {
+    const listHeader = headers.find(h => h.name?.toLowerCase() === 'list-id' || h.name?.toLowerCase() === 'list-unsubscribe');
+    const precedence = headers.find(h => h.name?.toLowerCase() === 'precedence')?.value?.toLowerCase();
+    const autoSubmitted = headers.find(h => h.name?.toLowerCase() === 'auto-submitted')?.value?.toLowerCase();
+    const xChabba = headers.find(h => h.name?.toLowerCase() === 'x-chabba')?.value === 'true';
+
+    if (listHeader || precedence === 'list' || precedence === 'bulk' || autoSubmitted === 'auto-generated' || xChabba) {
+        console.log(`[Gmail] Skipping message ${messageId}: Newsletter/Mailing List/Auto-Generated or Agent-to-Agent detected via headers`);
+        return true;
+    }
+
+    return false;
 }
 
 // ─── Main Service ──────────────────────────────────────────────────────────────
 
 export class GmailService {
     private tenantId: string;
-    private static activeSyncs = new Set<string>();
 
     constructor(tenantId: string) {
         this.tenantId = tenantId;
     }
 
-    /** Build an authenticated Gmail OAuth2 client using stored tokens */
-    private async getAuthClient(): Promise<OAuth2Client | null> {
-        const tenant = await prisma.tenant.findUnique({
-            where: { id: this.tenantId },
-            include: { users: { include: { accounts: true } } }
+    async syncAllAccounts(): Promise<{ processed: number; errors: string[] }> {
+        const accounts = await prisma.channelAccount.findMany({
+            where: { tenantId: this.tenantId, type: "GMAIL", isActive: true }
         });
 
-        if (!tenant || !tenant.gmailEmail) {
-            console.log(`[Gmail] Not configured for tenant: ${this.tenantId}`);
-            return null;
+        let total = 0;
+        const errors: string[] = [];
+        for (const account of accounts) {
+            try {
+                const { processed, historyId } = await this.syncAccount(account);
+                total += processed;
+                if (historyId) {
+                    await prisma.channelAccount.update({
+                        where: { id: account.id },
+                        data: { lastHistoryId: historyId }
+                    });
+                }
+            } catch (err: any) {
+                errors.push(`${account.address}: ${err.message}`);
+            }
         }
+        return { processed: total, errors };
+    }
 
-        // Find the user whose email is the configured gmailEmail
-        const user = tenant.users.find((u: any) => u.email === tenant.gmailEmail);
-        if (!user) {
-            console.log(`[Gmail] No user found with email ${tenant.gmailEmail}`);
-            return null;
-        }
-
-        // Find the Google account for that user
-        const account = user.accounts.find((a: any) => a.provider === "google");
-        if (!account || (!account.access_token && !account.refresh_token)) {
-            console.log(`[Gmail] No Google OAuth account found for ${tenant.gmailEmail}`);
-            return null;
-        }
+    async getAuthClient(account: any): Promise<OAuth2Client | null> {
+        const creds = account.credentials as any;
+        if (!creds || !creds.access_token) return null;
 
         const oauth2Client = new google.auth.OAuth2(
             process.env.GOOGLE_CLIENT_ID,
-            process.env.GOOGLE_CLIENT_SECRET,
+            process.env.GOOGLE_CLIENT_SECRET
         );
 
         oauth2Client.setCredentials({
-            access_token: account.access_token,
-            refresh_token: account.refresh_token,
-            expiry_date: account.expires_at ? account.expires_at * 1000 : undefined,
-        });
-
-        // Auto-refresh and persist new tokens
-        oauth2Client.on("tokens", async (tokens) => {
-            console.log(`[Gmail] Refreshed tokens for ${tenant.gmailEmail}`);
-            await prisma.account.update({
-                where: { id: account.id },
-                data: {
-                    access_token: tokens.access_token ?? account.access_token,
-                    ...(tokens.refresh_token && { refresh_token: tokens.refresh_token }),
-                    ...(tokens.expiry_date && { expires_at: Math.floor(tokens.expiry_date / 1000) }),
-                },
-            });
+            access_token: creds.access_token,
+            refresh_token: creds.refresh_token,
+            expiry_date: creds.expires_at ? creds.expires_at * 1000 : undefined
         });
 
         return oauth2Client;
     }
 
-    /** Poll Gmail inbox for unread messages, run agent, optionally reply */
-    async pollAndProcess(maxResults = 25): Promise<{ processed: number; lastResponse?: string; status?: string }> {
-        if (GmailService.activeSyncs.has(this.tenantId)) {
-            console.log(`[Gmail] Sync already in progress for ${this.tenantId}. Skipping.`);
-            return { processed: 0, status: "already_running" };
+    async syncAccount(account: any, maxResults = 50): Promise<{ processed: number; historyId?: string }> {
+        const auth = await this.getAuthClient(account);
+        if (!auth) return { processed: 0 };
+
+        const gmail = google.gmail({ version: "v1", auth });
+
+        const listRes = await gmail.users.messages.list({
+            userId: "me",
+            q: "-from:me -label:SENT newer_than:1d",
+            maxResults
+        });
+
+        const messages = listRes.data.messages || [];
+        if (messages.length === 0) return { processed: 0, historyId: listRes.data.nextPageToken || undefined };
+
+        let processed = 0;
+        for (const msg of messages) {
+            try {
+                const existing = await prisma.message.findUnique({ where: { externalId: msg.id! } });
+                if (existing) continue;
+
+                const fullMsg = await gmail.users.messages.get({
+                    userId: "me",
+                    id: msg.id!,
+                    format: "full"
+                });
+
+                const internalDate = parseInt(fullMsg.data.internalDate || "0");
+                const ageMinutes = (Date.now() - internalDate) / 1000 / 60;
+                if (ageMinutes > 1440) continue; // Skip messages older than 24 hours
+
+                const headers = fullMsg.data.payload?.headers || [];
+                const isAutomated = shouldSkipMessage(headers, msg.id!);
+
+                const from = getHeader(headers, "from");
+                const subject = getHeader(headers, "subject");
+                const rawBody = extractBody(fullMsg.data.payload);
+                const body = stripQuotedText(rawBody);
+
+                const trace = {
+                    headers,
+                    syncedAt: new Date().toISOString(),
+                    autoSkipped: isAutomated,
+                    originalBodyLength: rawBody.length,
+                    stripped: rawBody.length !== body.length
+                };
+
+                const createdMessage = await prisma.message.create({
+                    data: {
+                        tenantId: this.tenantId,
+                        channelAccountId: account.id,
+                        role: "user",
+                        content: `Subject: ${subject}\n\n${body}`,
+                        sender: from,
+                        source: "email",
+                        externalId: msg.id!,
+                        rfcMessageId: getHeader(headers, "message-id"),
+                        threadId: msg.threadId!,
+                        status: isAutomated ? "SKIPPED" : "RECEIVED",
+                        category: isAutomated ? "AUTOMATED" : undefined,
+                        trace: trace as any
+                    }
+                });
+                
+                if (!isAutomated) {
+                    const sessionId = `${account.id}_${msg.threadId!}`;
+                    await TurnManager.addMessage(sessionId, createdMessage as any, { protocol: 'EMAIL', baseTimeoutMs: 60000 });
+                }
+                
+                processed++;
+            } catch (err: any) {
+                console.error(`[Gmail] Error ingesting message ${msg.id}:`, err.message);
+            }
         }
 
-        GmailService.activeSyncs.add(this.tenantId);
+        const profile = await gmail.users.getProfile({ userId: "me" });
+        return { processed, historyId: profile.data.historyId || undefined };
+    }
+
+    async pollAndProcess(): Promise<{ processed: number; status: string }> {
+        const result = await this.syncAllAccounts();
+        return { processed: result.processed, status: "OK" };
+    }
+
+    async registerWatch(account: any): Promise<boolean> {
+        const auth = await this.getAuthClient(account);
+        if (!auth) return false;
+
+        const gmail = google.gmail({ version: "v1", auth });
         try {
-            const auth = await this.getAuthClient();
-            if (!auth) {
-                return { processed: 0, status: "no_auth" };
-            }
-
-            const tenant = await prisma.tenant.findUnique({
-                where: { id: this.tenantId },
-            }) as any;
-
-            if (tenant && tenant.isSyncEnabled === false) {
-                console.log(`[Gmail] Sync is disabled for tenant: ${this.tenantId}`);
-                return { processed: 0, status: "disabled" };
-            }
-
-            const autoReply = tenant?.gmailSettings?.autoReply !== false;
-            const gmail = google.gmail({ version: "v1", auth });
-
-            // Fetch unread messages - limited to last 24 hours to avoid processing old unread emails
-            const listRes = await gmail.users.messages.list({
+            await gmail.users.watch({
                 userId: "me",
-                q: "is:unread newer_than:1d -category:social -category:promotions",
-                maxResults: maxResults,
+                requestBody: {
+                    topicName: process.env.GMAIL_PUBSUB_TOPIC || "",
+                    labelIds: ["INBOX"]
+                }
             });
 
-            const messages = listRes.data.messages || [];
-            console.log(`[Gmail] Found ${messages.length} email(s) for ${tenant?.gmailEmail} using query: ${"is:unread -category:social -category:promotions"}`);
+            await prisma.channelAccount.update({
+                where: { id: account.id },
+                data: { lastWatchAt: new Date() }
+            });
+            return true;
+        } catch (err: any) {
+            console.error(`[Gmail] Failed to register watch for ${account.address}:`, err.message);
+            return false;
+        }
+    }
 
-            if (messages.length === 0) {
-                return { processed: 0 };
-            }
+    async syncByHistory(account: any): Promise<{ processed: number }> {
+        if (!account.lastHistoryId) return this.syncAccount(account);
 
-            let processed = 0;
-            let lastResponse: string | undefined;
+        const auth = await this.getAuthClient(account);
+        if (!auth) return { processed: 0 };
 
-            for (const msg of messages) {
-                let dbMessageId: string | undefined;
-                try {
-                    // Skip if already successfully processed
-                    const existing = await prisma.message.findFirst({
-                        where: { externalId: msg.id!, tenantId: this.tenantId },
-                    });
-                    if (existing && existing.status === "COMPLETED") {
-                        console.log(`[Gmail] Skipping ${msg.id} - already COMPLETED`);
-                        continue;
-                    }
+        const gmail = google.gmail({ version: "v1", auth });
 
-                    // Fetch full message
-                    const fullMsg = await gmail.users.messages.get({
-                        userId: "me",
-                        id: msg.id!,
-                        format: "full",
-                    });
+        try {
+            const historyRes = await gmail.users.history.list({
+                userId: "me",
+                startHistoryId: account.lastHistoryId
+            });
 
-                    const headers = fullMsg.data.payload?.headers || [];
-                    const from = getHeader(headers, "from");
-                    const subject = getHeader(headers, "subject");
-                    const body = extractBody(fullMsg.data.payload);
-                    const gmailThreadId = fullMsg.data.threadId;
+            const history = historyRes.data.history || [];
+            if (history.length === 0) return { processed: 0 };
 
-                    if (!body.trim()) {
-                        console.log(`[Gmail] Skipping ${msg.id} - empty body`);
-                        continue;
-                    }
+            let totalProcessed = 0;
+            const messageIds = new Set<string>();
 
-                    console.log(`[Gmail] Processing email from: ${from} | Subject: ${subject} | Thread: ${gmailThreadId}`);
-
-                    // Create or update the message record to PROCESSING
-                    const dbMessage = await prisma.message.upsert({
-                        where: { externalId: msg.id! },
-                        create: {
-                            tenantId: this.tenantId,
-                            externalId: msg.id!,
-                            threadId: gmailThreadId,
-                            role: "user",
-                            content: `Subject: ${subject}\n\n${body.trim()}`,
-                            sender: from,
-                            source: "email",
-                            status: "PROCESSING",
-                        },
-                        update: {
-                            status: "PROCESSING",
-                        }
-                    });
-                    dbMessageId = dbMessage.id;
-
-                    // Run the AI agent
-                    const result = await orchestrate(
-                        `Subject: ${subject}\n\n${body.trim()}`,
-                        this.tenantId
-                    );
-
-                    const category = result?.category || "OTHER";
-                    const agentMessages = result?.messages || [];
-                    const lastMsg = agentMessages[agentMessages.length - 1];
-                    const responseContent = typeof lastMsg?.content === "string"
-                        ? lastMsg.content
-                        : JSON.stringify(lastMsg?.content);
-
-                    // Save agent reply and link to parent
-                    if (responseContent && category === "BUSINESS") {
-                        await prisma.message.create({
-                            data: {
-                                tenantId: this.tenantId,
-                                role: "assistant",
-                                content: responseContent,
-                                sender: "AgentClaw Bot",
-                                source: "email",
-                                threadId: gmailThreadId || undefined,
-                                parentMessageId: dbMessage.id,
-                                status: "COMPLETED",
-                                category: "BUSINESS",
-                                trace: result as any, // result is AgentState, trace is Json
-                            },
-                        });
-
-                        // Auto-reply if enabled
-                        if (autoReply) {
-                            const fromEmail = from.match(/<(.+)>/)?.[1] || from;
-                            await gmail.users.messages.send({
-                                userId: "me",
-                                requestBody: {
-                                    threadId: gmailThreadId || undefined,
-                                    raw: buildRawEmail(fromEmail, tenant.gmailEmail, subject, responseContent),
-                                },
-                            });
-                            console.log(`[Gmail] Auto-replied to ${fromEmail} (Category: BUSINESS)`);
-                        }
-                    } else {
-                        console.log(`[Gmail] Skipping auto-reply for category: ${category}`);
-                    }
-
-                    // Update parent with category and COMPLETED status
-                    await prisma.message.update({
-                        where: { id: dbMessage.id },
-                        data: {
-                            status: "COMPLETED",
-                            category,
-                            trace: result as any
-                        }
-                    });
-
-                    // Mark the original email as read in Gmail
-                    await gmail.users.messages.modify({
-                        userId: "me",
-                        id: msg.id!,
-                        requestBody: { removeLabelIds: ["UNREAD"] },
-                    });
-
-                    processed++;
-                } catch (err: any) {
-                    console.error(`[Gmail] Error processing message ${msg.id}:`, err.message);
-                    if (dbMessageId) {
-                        await prisma.message.update({
-                            where: { id: dbMessageId },
-                            data: { status: "FAILED", trace: { error: err.message } as any }
-                        });
+            for (const item of history) {
+                if (item.messagesAdded) {
+                    for (const added of item.messagesAdded) {
+                        if (added.message?.id) messageIds.add(added.message.id);
                     }
                 }
             }
 
-            return { processed, lastResponse, status: "completed" };
-        } finally {
-            GmailService.activeSyncs.delete(this.tenantId);
+            for (const msgId of messageIds) {
+                const existing = await prisma.message.findUnique({ where: { externalId: msgId } });
+                if (existing) continue;
+
+                const fullMsg = await gmail.users.messages.get({
+                    userId: "me",
+                    id: msgId,
+                    format: "full"
+                });
+
+                const internalDate = parseInt(fullMsg.data.internalDate || "0");
+                if (Date.now() - internalDate > 1440 * 60 * 1000) continue;
+
+                const headers = fullMsg.data.payload?.headers || [];
+                const isAutomated = shouldSkipMessage(headers, msgId);
+
+                const from = getHeader(headers, "from");
+                const subject = getHeader(headers, "subject");
+                const rawBody = extractBody(fullMsg.data.payload);
+                const body = stripQuotedText(rawBody);
+
+                const trace = {
+                    headers,
+                    syncedAt: new Date().toISOString(),
+                    autoSkipped: isAutomated,
+                    originalBodyLength: rawBody.length,
+                    stripped: rawBody.length !== body.length
+                };
+
+                const createdMessage = await prisma.message.create({
+                    data: {
+                        tenantId: this.tenantId,
+                        channelAccountId: account.id,
+                        role: "user",
+                        content: `Subject: ${subject}\n\n${body}`,
+                        sender: from,
+                        source: "email",
+                        externalId: msgId,
+                        rfcMessageId: getHeader(headers, "message-id"),
+                        threadId: fullMsg.data.threadId!,
+                        status: isAutomated ? "SKIPPED" : "RECEIVED",
+                        category: isAutomated ? "AUTOMATED" : undefined,
+                        trace: trace as any
+                    }
+                });
+                
+                if (!isAutomated) {
+                    const sessionId = `${account.id}_${fullMsg.data.threadId!}`;
+                    await TurnManager.addMessage(sessionId, createdMessage as any, { protocol: 'EMAIL', baseTimeoutMs: 60000 });
+                }
+                
+                totalProcessed++;
+            }
+
+            if (historyRes.data.historyId) {
+                await prisma.channelAccount.update({
+                    where: { id: account.id },
+                    data: { lastHistoryId: historyRes.data.historyId }
+                });
+            }
+
+            return { processed: totalProcessed };
+
+        } catch (error: any) {
+            if (error.status === 404 || error.status === 410) {
+                const result = await this.syncAccount(account);
+                return { processed: result.processed };
+            }
+            throw error;
+        }
+    }
+
+    async sendEmail(account: any, to: string, subject: string, body: string, threadId?: string): Promise<boolean> {
+        const auth = await this.getAuthClient(account);
+        if (!auth) return false;
+
+        const gmail = google.gmail({ version: "v1", auth });
+
+        // Encode the email according to RFC 2822
+        const identifier = account.name || account.address;
+        const utf8Subject = `=?utf-8?B?${Buffer.from(subject).toString('base64')}?=`;
+        const emailParts = [
+            `From: ${identifier} <${account.address}>`,
+            `To: ${to}`,
+            `Content-Type: text/plain; charset=utf-8`,
+            `MIME-Version: 1.0`,
+            `Subject: ${utf8Subject}`,
+            ``,
+            body
+        ];
+        const email = emailParts.join('\r\n');
+        const encodedEmail = Buffer.from(email).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+        try {
+            await gmail.users.messages.send({
+                userId: "me",
+                requestBody: {
+                    raw: encodedEmail,
+                    threadId: threadId
+                }
+            });
+            return true;
+        } catch (err: any) {
+            console.error(`[Gmail] Failed to send email to ${to}:`, err.message);
+            return false;
         }
     }
 }

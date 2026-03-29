@@ -30,6 +30,15 @@ export async function POST(req: NextRequest) {
                     trace: Prisma.DbNull
                 }
             });
+
+            // Trigger immediate processing for prioritization
+            try {
+                const { AgentProcessor } = await import("@/lib/agents/processor");
+                // Use the new targeted processing to ensure this specific message is handled NOW
+                await AgentProcessor.processTargetedMessage(messages[0].id);
+            } catch (err) {
+                console.error("Failed to trigger immediate processing:", err);
+            }
         }
 
         return NextResponse.json({ success: true });

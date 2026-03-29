@@ -57,3 +57,36 @@ export async function GET(req: NextRequest) {
         return NextResponse.json({ error: error.message }, { status: 500 });
     }
 }
+
+export async function DELETE(req: NextRequest) {
+    try {
+        const session = await getServerSession(authOptions);
+        const tenantId = session?.user?.tenantId || "default-tenant";
+
+        const { searchParams } = new URL(req.url);
+        const documentId = searchParams.get('documentId');
+
+        if (!documentId) {
+            return NextResponse.json({ error: "documentId is required" }, { status: 400 });
+        }
+
+        // Verify the document belongs to the tenant
+        const doc = await prisma.document.findUnique({
+            where: { id: documentId }
+        });
+
+        if (!doc || doc.tenantId !== tenantId) {
+            return NextResponse.json({ error: "Document not found or access denied" }, { status: 404 });
+        }
+
+        // Delete the document (cascade delete on chunks)
+        await prisma.document.delete({
+            where: { id: documentId }
+        });
+
+        return NextResponse.json({ success: true, deletedId: documentId });
+    } catch (error: any) {
+        console.error("DELETE Upload Error:", error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+}

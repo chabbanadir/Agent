@@ -6,7 +6,7 @@ import { AgentState } from "@/types/agent";
 
 export async function POST(req: NextRequest) {
     try {
-        const { message, tenantId, sender } = await req.json();
+        const { message, tenantId, sender, channel } = await req.json();
 
         if (!message || !tenantId) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
@@ -27,6 +27,7 @@ export async function POST(req: NextRequest) {
         const result = (await agentExecutor.invoke({
             messages: [new HumanMessage(message)],
             tenantId: tenantId,
+            channel: channel,
         })) as unknown as AgentState;
 
         if (result.next === "END" && result.messages.length > 1) {

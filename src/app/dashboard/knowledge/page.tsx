@@ -111,6 +111,25 @@ export default function KnowledgeBasePage() {
         }
     };
 
+    const handleDelete = async (documentId: string) => {
+        if (!confirm('Are you sure you want to delete this document and its embeddings?')) return;
+        try {
+            const res = await fetch(`/api/upload?documentId=${documentId}`, {
+                method: 'DELETE'
+            });
+            if (res.ok) {
+                setNotification({ message: 'Document deleted.', type: 'success' });
+                fetchDocuments();
+            } else {
+                const data = await res.json();
+                setNotification({ message: data.error || 'Delete failed', type: 'error' });
+            }
+        } catch (error) {
+            console.error(error);
+            setNotification({ message: 'An error occurred during deletion.', type: 'error' });
+        }
+    };
+
     const formatSize = (bytes: number) => {
         if (!bytes) return '0 B';
         const k = 1024;
@@ -183,7 +202,7 @@ export default function KnowledgeBasePage() {
                         <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-600 group-focus-within:text-indigo-500 transition-all font-black" size={20} />
                         <input
                             type="text"
-                            placeholder="Filter your vectorized knowledge..."
+                            placeholder="Filter your extracted knowledge..."
                             className="w-full bg-slate-900/50 border border-slate-800 rounded-3xl py-6 pl-16 pr-6 text-white text-lg focus:outline-none focus:border-indigo-500/50 transition-all font-medium placeholder:text-slate-700 backdrop-blur-sm"
                         />
                     </div>
@@ -197,7 +216,7 @@ export default function KnowledgeBasePage() {
                                         <Brain size={24} className="text-indigo-400 opacity-50" />
                                     </div>
                                 </div>
-                                <p className="text-slate-500 font-black uppercase tracking-[0.2em] text-[10px] animate-pulse">Syncing Vector Database...</p>
+                                <p className="text-slate-500 font-black uppercase tracking-[0.2em] text-[10px] animate-pulse">Syncing Knowledge Base...</p>
                             </div>
                         ) : documents.length > 0 ? (
                             documents.map((doc) => (
@@ -241,7 +260,7 @@ export default function KnowledgeBasePage() {
                                                 Generate Embeddings
                                             </button>
                                         )}
-                                        <button className="p-4 rounded-2xl bg-slate-800/50 hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition-all border border-slate-800">
+                                        <button onClick={() => handleDelete(doc.id)} className="p-4 rounded-2xl bg-slate-800/50 hover:bg-rose-500/20 text-slate-500 hover:text-rose-400 transition-all border border-slate-800">
                                             <Trash2 size={20} />
                                         </button>
                                     </div>
@@ -274,7 +293,7 @@ export default function KnowledgeBasePage() {
                                 <div className="space-y-3 relative z-10">
                                     <p className="text-white font-black text-3xl tracking-tight">Expand Agent Intellect</p>
                                     <p className="text-slate-600 font-bold uppercase tracking-[0.2em] text-xs">Drop files here or click to browse</p>
-                                    <p className="text-slate-700 text-[10px] font-medium mt-4">SECURE VECTOR STORAGE • PDF, TXT, CSV</p>
+                                    <p className="text-slate-700 text-[10px] font-medium mt-4">SECURE KNOWLEDGE STORAGE • PDF, TXT, CSV</p>
                                 </div>
                             </div>
                         )}
@@ -288,10 +307,10 @@ export default function KnowledgeBasePage() {
                                 <div className="p-3 rounded-2xl bg-indigo-500/10 text-indigo-400">
                                     <Search size={32} />
                                 </div>
-                                Semantic Insight Probe
+                                Knowledge Query Test
                             </h3>
                             <p className="text-slate-500 max-w-2xl leading-relaxed font-medium">
-                                Simulate an agent inquiry to visualize the raw context gathered from your vector index.
+                                Simulate an agent inquiry to visualize the raw context gathered from your knowledge base.
                                 High similarity scores ensure your agent remains grounded and factual.
                             </p>
                         </div>

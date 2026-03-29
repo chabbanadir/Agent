@@ -9,20 +9,16 @@ export async function POST(req: NextRequest) {
         const tenantId = session?.user?.tenantId || "default-tenant";
 
         const gmail = new GmailService(tenantId);
-        const result = await gmail.pollAndProcess(1);
+        const syncResult = await gmail.syncAllAccounts();
 
-        if (result.status === "already_running") {
-            return NextResponse.json({
-                success: true,
-                status: "Sync already in progress in the background. Please wait.",
-                details: result
-            });
-        }
+        // Trigger agent processing for any RECEIVED messages
+        const { AgentProcessor } = await import("@/lib/agents/processor");
+        await AgentProcessor.processPendingMessages();
 
         return NextResponse.json({
             success: true,
-            status: result.processed > 0 ? "Sync completed" : "No new messages to sync",
-            details: result
+            status: syncResult.processed > 0 ? "Sync and processing completed" : "No new messages to sync",
+            details: syncResult
         });
     } catch (error: any) {
         console.error("[Sync API Error]:", error);

@@ -12,7 +12,7 @@ async function main() {
             id: "default-tenant",
             name: "Default Business",
             email: "default@agentclaw.com",
-            isSyncEnabled: true
+            isSyncEnabled: false
         }
     });
 
@@ -28,7 +28,7 @@ async function main() {
                 description: "Handles general inquiries and support.",
                 provider: "openai",
                 model: "gpt-4o",
-                isActive: true
+                isActive: false
             }
         });
         console.log("✅ [Init] Created default General Assistant agent.");

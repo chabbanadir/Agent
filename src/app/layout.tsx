@@ -20,10 +20,7 @@ export const metadata: Metadata = {
 import { Providers } from "@/components/Providers";
 import { startAutonomousWorker } from "@/lib/background-sync";
 
-// Start background sync loop on server-side
-if (typeof window === "undefined") {
-  startAutonomousWorker();
-}
+// Autonomous worker initialization moved to a single-process guarantee or instrumentation.
 
 export default function RootLayout({
   children,

@@ -1,5 +1,6 @@
 import NextAuth, { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
 import prisma from "@/lib/prisma";
 
 export const authOptions: NextAuthOptions = {
@@ -10,6 +11,21 @@ export const authOptions: NextAuthOptions = {
         strategy: "jwt",
     },
     providers: [
+        CredentialsProvider({
+            name: "Developer Mock",
+            credentials: {
+                email: { label: "Email", type: "text", placeholder: "dev@example.com" },
+            },
+            async authorize(credentials) {
+                if (!credentials?.email) return null;
+                return {
+                    id: "dev-mock-id",
+                    name: "Developer Admin",
+                    email: credentials.email,
+                    image: "https://i.pravatar.cc/150",
+                };
+            }
+        }),
         GoogleProvider({
             clientId: process.env.GOOGLE_CLIENT_ID!,
             clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
@@ -104,6 +120,59 @@ export const authOptions: NextAuthOptions = {
                         where: { id: dbUser.id },
                         data: { tenantId: tenant.id },
                     });
+                }
+
+                // --- AUTO-CHANNEL INTEGRATION ---
+                // Automatically create/update a ChannelAccount for the login email
+                if (account && account.provider === 'google') {
+                    // Check if we are in "Linking" mode via a cookie
+                    const { cookies } = await import("next/headers");
+                    const cookieStore = await cookies();
+                    const linkingTenantId = cookieStore.get("linking_tenant_id")?.value;
+
+                    const targetTenantId = linkingTenantId || tenant.id;
+
+                    await prisma.channelAccount.upsert({
+                        where: {
+                            tenantId_address_type: {
+                                tenantId: targetTenantId,
+                                address: user.email,
+                                type: 'GMAIL',
+                            },
+                        },
+                        update: {
+                            name: `${user.name || 'Business'} Gmail`,
+                            credentials: {
+                                access_token: account.access_token,
+                                refresh_token: account.refresh_token,
+                                expires_at: account.expires_at,
+                                scope: account.scope,
+                            } as any,
+                            isActive: true,
+                        },
+                        create: {
+                            tenantId: targetTenantId,
+                            address: user.email,
+                            type: 'GMAIL',
+                            name: `${user.name || 'Business'} Gmail`,
+                            credentials: {
+                                access_token: account.access_token,
+                                refresh_token: account.refresh_token,
+                                expires_at: account.expires_at,
+                                scope: account.scope,
+                            } as any,
+                            isActive: true,
+                        },
+                    });
+
+                    if (linkingTenantId) {
+                        console.log(`[NextAuth] Linking intent DETECTED for ${user.email} -> Tenant ${linkingTenantId}`);
+                        // Clear the cookie and redirect back to channels
+                        // Note: Returning a string as a URL is supported in some next-auth versions to redirect
+                        return "/dashboard/channels?success=linked";
+                    } else {
+                        console.log(`[NextAuth] Standard LOGIN for ${user.email} -> Auto-syncing Primary Gmail.`);
+                    }
                 }
 
                 return true;
